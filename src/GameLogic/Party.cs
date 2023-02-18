@@ -232,12 +232,13 @@ public sealed class Party : Disposable
         var randomizedTotalExperiencePerLevel = randomizedTotalExperience / totalLevel;
         foreach (var player in this._distributionList)
         {
-            if (player.SelectedCharacter?.CharacterClass?.IsMasterClass ?? false)
+            if ((short)player.Attributes![Stats.Level] == this._distributionList.First().GameContext.Configuration.MaximumLevel)
             {
-                var exp_master = (int)(randomizedTotalExperiencePerLevel * (player.Attributes![Stats.MasterLevel] + player.Attributes![Stats.Level]) * player.Attributes[Stats.MasterExperienceRate]);
-                await player.AddMasterExperienceAsync(exp_master, killedObject).ConfigureAwait(false);
-                var exp = (int)(randomizedTotalExperiencePerLevel * player.Attributes![Stats.Level] * player.Attributes[Stats.ExperienceRate]);
-                await player.AddExperienceAsync(exp, killedObject).ConfigureAwait(false);
+                if (player.SelectedCharacter?.CharacterClass?.IsMasterClass ?? false)
+                {
+                    var expMaster = (int)(randomizedTotalExperiencePerLevel * (player.Attributes![Stats.MasterLevel] + player.Attributes![Stats.Level]) * player.Attributes[Stats.MasterExperienceRate]);
+                    await player.AddMasterExperienceAsync(expMaster, killedObject).ConfigureAwait(false);
+                }
             }
             else
             {
