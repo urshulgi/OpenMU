@@ -4,6 +4,7 @@
 
 namespace MUnique.OpenMU.DataModel.Configuration;
 
+using MUnique.OpenMU.Annotations;
 using MUnique.OpenMU.AttributeSystem;
 using MUnique.OpenMU.DataModel.Configuration.Items;
 using MUnique.OpenMU.DataModel.Entities;
@@ -14,7 +15,8 @@ using MUnique.OpenMU.PlugIns;
 /// A game configuration contains the whole configuration of a game, directly or indirectly.
 /// </summary>
 [AggregateRoot]
-public class GameConfiguration
+[Cloneable]
+public partial class GameConfiguration
 {
     /// <summary>
     /// Gets or sets the maximum reachable level.
@@ -63,11 +65,13 @@ public class GameConfiguration
     /// <summary>
     /// Gets or sets the experience table. Index is the player level, value the needed experience to reach that level.
     /// </summary>
+    [IgnoreWhenCloning]
     public long[]? ExperienceTable { get; set; }
 
     /// <summary>
     /// Gets or sets the master experience table. Index is the player level, value the needed experience to reach that level.
     /// </summary>
+    [IgnoreWhenCloning]
     public long[]? MasterExperienceTable { get; set; }
 
     /// <summary>
@@ -246,4 +250,10 @@ public class GameConfiguration
     /// </summary>
     [MemberOfAggregate]
     public virtual ICollection<MiniGameDefinition> MiniGameDefinitions { get; protected set; } = null!;
+
+    /// <inheritdoc />
+    public override string ToString()
+    {
+        return "Default Game Configuration";
+    }
 }

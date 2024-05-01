@@ -42,7 +42,7 @@ public class RavenCommandManager : Disposable, IPetCommandManager
         this._petAttackerSurrogate = new AttackerSurrogate(owner, new RavenAttributeSystem(owner));
     }
 
-    private TimeSpan AttackDelay => TimeSpan.FromMilliseconds(1500 - (this._petAttackerSurrogate.Attributes[Stats.AttackSpeed] * 10));
+    private TimeSpan AttackDelay => TimeSpan.FromMilliseconds(Math.Max(100, 1500 - (this._petAttackerSurrogate.Attributes[Stats.AttackSpeed] * 10)));
 
     /// <summary>
     /// Sets the behaviour.
@@ -51,7 +51,7 @@ public class RavenCommandManager : Disposable, IPetCommandManager
     /// <param name="target">The target.</param>
     public async ValueTask SetBehaviourAsync(PetBehaviour newBehaviour, IAttackable? target)
     {
-        this._attackCts?.Cancel();
+        await (this._attackCts?.CancelAsync() ?? Task.CompletedTask).ConfigureAwait(false);
         this._attackCts?.Dispose();
         this._attackCts = null;
 

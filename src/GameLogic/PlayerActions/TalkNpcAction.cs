@@ -98,7 +98,8 @@ public class TalkNpcAction
                 break;
             case NpcWindow.VaultStorage:
                 player.Account!.Vault ??= player.PersistenceContext.CreateNew<ItemStorage>();
-                player.Vault = new Storage(InventoryConstants.WarehouseSize, player.Account.Vault);
+                var warehouseSize = player.Account.IsVaultExtended ? InventoryConstants.WarehouseSize * 2 : InventoryConstants.WarehouseSize;
+                player.Vault = new Storage(warehouseSize, player.Account.Vault);
                 await player.InvokeViewPlugInAsync<IShowVaultPlugIn>(p => p.ShowVaultAsync()).ConfigureAwait(false);
                 break;
             case NpcWindow.GuildMaster:
@@ -125,7 +126,7 @@ public class TalkNpcAction
     private async ValueTask ShowLegacyQuestDialogAsync(Player player)
     {
         var quests = player.OpenedNpc!.Definition.Quests
-            .Where(q => q.QualifiedCharacter is null || q.QualifiedCharacter == player.SelectedCharacter!.CharacterClass);
+            .Where(q => q.QualifiedCharacter is null || Equals(q.QualifiedCharacter, player.SelectedCharacter!.CharacterClass));
 
         if (!quests.Any())
         {

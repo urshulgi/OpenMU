@@ -57,6 +57,11 @@ public class NonPlayerCharacter : AsyncDisposable, IObservable, IRotatable, ILoc
     /// </summary>
     public MonsterSpawnArea SpawnArea { get; protected set; }
 
+    /// <summary>
+    /// Gets or sets the index of the spawn within the <see cref="SpawnArea"/>.
+    /// </summary>
+    public int SpawnIndex { get; set; }
+
     /// <inheritdoc/>
     public Bucket<ILocateable>? NewBucket { get; set; }
 
@@ -96,6 +101,12 @@ public class NonPlayerCharacter : AsyncDisposable, IObservable, IRotatable, ILoc
     {
         using var writerLock = await this.ObserverLock.WriterLockAsync();
         this.Observers.Add(observer);
+        if (this.Observers.Count == 1)
+        {
+            this.OnFirstObserverAdded();
+        }
+
+        this.OnObserverAdded();
     }
 
     /// <inheritdoc/>
@@ -103,12 +114,50 @@ public class NonPlayerCharacter : AsyncDisposable, IObservable, IRotatable, ILoc
     {
         using var writerLock = await this.ObserverLock.WriterLockAsync();
         this.Observers.Remove(observer);
+        if (this.Observers.Count == 0)
+        {
+            this.OnLastObserverRemoved();
+        }
+
+        this.OnObserverRemoved();
     }
 
     /// <inheritdoc/>
     public override string ToString()
     {
         return $"{this.Definition.Designation} - Id: {this.Id} - Position: {this.Position}";
+    }
+
+    /// <summary>
+    /// Called when an observer has been added.
+    /// </summary>
+    protected virtual void OnObserverAdded()
+    {
+        // can be overwritten.
+    }
+
+    /// <summary>
+    /// Called when an observer has been removed.
+    /// </summary>
+    protected virtual void OnObserverRemoved()
+    {
+        // can be overwritten.
+    }
+
+    /// <summary>
+    /// Called when the first observer has been added.
+    /// </summary>
+    protected virtual void OnFirstObserverAdded()
+    {
+        // can be overwritten.
+    }
+
+    /// <summary>
+    /// Called when the last observer has been removed.
+    /// </summary>
+    protected virtual void OnLastObserverRemoved()
+    {
+        // can be overwritten.
     }
 
     /// <inheritdoc />

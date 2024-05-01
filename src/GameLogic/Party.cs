@@ -179,6 +179,48 @@ public sealed class Party : Disposable
         }
     }
 
+    /// <summary>
+    /// Gets the quest drop item groups for the whole party.
+    /// </summary>
+    /// <param name="killer">The killer.</param>
+    /// <returns>The list of <see cref="DropItemGroup"/> which should be considered when generating a drop.</returns>
+    public async ValueTask<IList<DropItemGroup>> GetQuestDropItemGroupsAsync(IPartyMember killer)
+    {
+        using var _ = await this._distributionLock.LockAsync();
+        try
+        {
+            using (await killer.ObserverLock.ReaderLockAsync().ConfigureAwait(false))
+            {
+                this._distributionList.AddRange(
+                    this.PartyList.OfType<Player>()
+                        .Where(p => p.CurrentMap == killer.CurrentMap
+                                    && !p.IsAtSafezone()
+                                    && p.IsAlive
+                                    && (p == killer || killer.Observers.Contains(p))));
+            }
+
+            IList<DropItemGroup> result = [];
+
+            var dropItemGroups = this._distributionList
+                .SelectMany(m => m.SelectedCharacter?.GetQuestDropItemGroups() ?? Enumerable.Empty<DropItemGroup>());
+            foreach (var dropItemGroup in dropItemGroups)
+            {
+                if (result.Count == 0)
+                {
+                    result = new List<DropItemGroup>();
+                }
+
+                result.Add(dropItemGroup);
+            }
+
+            return result;
+        }
+        finally
+        {
+            this._distributionList.Clear();
+        }
+    }
+
     /// <inheritdoc/>
     protected override void Dispose(bool disposing)
     {
@@ -232,7 +274,7 @@ public sealed class Party : Disposable
         var randomizedTotalExperiencePerLevel = randomizedTotalExperience / totalLevel;
         foreach (var player in this._distributionList)
         {
-            if ((short)player.Attributes![Stats.Level] == this._distributionList.First().GameContext.Configuration.MaximumLevel)
+            if ((short)player.Attributes![Stats.Level] == player.GameContext.Configuration.MaximumLevel)
             {
                 if (player.SelectedCharacter?.CharacterClass?.IsMasterClass ?? false)
                 {

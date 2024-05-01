@@ -11,6 +11,7 @@ using System.Runtime.InteropServices;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Nito.Disposables.Internals;
 
 /// <summary>
 /// The manager for plugins.
@@ -23,6 +24,7 @@ public class PlugInManager
     private readonly IDictionary<Guid, Type> _knownPlugIns = new ConcurrentDictionary<Guid, Type>();
     private readonly ConcurrentDictionary<Type, ISet<Type>> _knownPlugInsPerInterfaceType = new ();
     private readonly ConcurrentDictionary<Guid, Type> _activePlugIns = new ();
+    private object? _lastCreatedPlugIn;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlugInManager" /> class.
@@ -271,12 +273,14 @@ public class PlugInManager
     /// <typeparam name="TPlugInClass">The type of the plug in class.</typeparam>
     public void RegisterPlugIn<TPlugInInterface, TPlugInClass>()
         where TPlugInInterface : class
-        where TPlugInClass : TPlugInInterface
+        where TPlugInClass : class, TPlugInInterface
     {
         this.RegisterPlugInType(typeof(TPlugInClass));
         if (typeof(TPlugInInterface).GetCustomAttribute(typeof(PlugInPointAttribute)) != null)
         {
-            this.RegisterPlugInAtPlugInPoint<TPlugInInterface>(this.CreatePlugInInstance<TPlugInClass>());
+            var plugIn = this._lastCreatedPlugIn as TPlugInClass ?? this.CreatePlugInInstance<TPlugInClass>();
+            this._lastCreatedPlugIn = plugIn;
+            this.RegisterPlugInAtPlugInPoint<TPlugInInterface>(plugIn);
         }
         else if (this.GetCustomPlugInPointType(typeof(TPlugInInterface)) is { } customPlugInPointType)
         {
@@ -408,8 +412,10 @@ public class PlugInManager
             }
             else if (!string.IsNullOrEmpty(configuration.CustomPlugInSource))
             {
+                this._logger.LogWarning($"Custom plugin source found at plugin configuration: {configuration}");
+                /* TODO: Implement code signing, if we really need this feature.
                 Assembly customPlugInAssembly = this.CompileCustomPlugInAssembly(configuration);
-                this.DiscoverAndRegisterPlugIns(customPlugInAssembly);
+                this.DiscoverAndRegisterPlugIns(customPlugInAssembly);*/
             }
             else
             {
@@ -490,7 +496,24 @@ public class PlugInManager
             .Where(assembly => assembly.FullName is not null)
             .Where(assembly => !assembly.FullName!.StartsWith("System"))
             .Where(assembly => !assembly.FullName!.StartsWith("Microsoft"))
-            .SelectMany(assembly => assembly.DefinedTypes.Where(type => type.GetCustomAttribute<PlugInAttribute>() != null));
+            .Where(assembly => !assembly.FullName!.StartsWith("Nito"))
+            .Where(assembly => !assembly.FullName!.StartsWith("Blazor"))
+            .SelectMany(assembly =>
+                {
+                    try
+                    {
+                        return assembly.DefinedTypes.Where(type => type.GetCustomAttribute<PlugInAttribute>() != null);
+                    }
+                    catch (ReflectionTypeLoadException ex)
+                    {
+                        return ex.Types.WhereNotNull();
+                    }
+                    catch (Exception)
+                    {
+                        return Enumerable.Empty<Type>();
+                    }
+                }
+            );
     }
 
     private IEnumerable<Type> DiscoverPlugIns(Assembly assembly)
@@ -510,7 +533,7 @@ public class PlugInManager
                 foreach (var plugInInterface in plugInInterfaces)
                 {
                     var genericMethod = this.GetType().GetMethods().FirstOrDefault(mi => mi.IsGenericMethod && mi.Name == nameof(this.RegisterPlugIn))?.MakeGenericMethod(plugInInterface, plugIn);
-                    genericMethod?.Invoke(this, Array.Empty<object>());
+                    genericMethod?.Invoke(this, []);
                 }
             }
             catch (Exception e)
@@ -518,6 +541,8 @@ public class PlugInManager
                 this._logger.LogError(e, $"Couldn't register plugin type {plugIn}");
                 this._logger.LogError("TODO: Use ServiceContainer");
             }
+
+            this._lastCreatedPlugIn = null;
         }
     }
 

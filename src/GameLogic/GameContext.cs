@@ -51,6 +51,8 @@ public class GameContext : AsyncDisposable, IGameContext
     /// </summary>
     private readonly List<Player> _playerList = new();
 
+    private readonly IDisposable _configChangeHandlerRegistration;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="GameContext" /> class.
     /// </summary>
@@ -60,7 +62,7 @@ public class GameContext : AsyncDisposable, IGameContext
     /// <param name="loggerFactory">The logger factory.</param>
     /// <param name="plugInManager">The plug in manager.</param>
     /// <param name="dropGenerator">The drop generator.</param>
-    public GameContext(GameConfiguration configuration, IPersistenceContextProvider persistenceContextProvider, IMapInitializer mapInitializer, ILoggerFactory loggerFactory, PlugInManager plugInManager, IDropGenerator dropGenerator)
+    public GameContext(GameConfiguration configuration, IPersistenceContextProvider persistenceContextProvider, IMapInitializer mapInitializer, ILoggerFactory loggerFactory, PlugInManager plugInManager, IDropGenerator dropGenerator, IConfigurationChangeMediator changeMediator)
     {
         try
         {
@@ -70,10 +72,12 @@ public class GameContext : AsyncDisposable, IGameContext
             this._mapInitializer = mapInitializer;
             this.LoggerFactory = loggerFactory;
             this.DropGenerator = dropGenerator;
+            this.ConfigurationChangeMediator = changeMediator;
             this.ItemPowerUpFactory = new ItemPowerUpFactory(loggerFactory.CreateLogger<ItemPowerUpFactory>());
             this._recoverTimer = new Timer(this.RecoverTimerElapsed, null, this.Configuration.RecoveryInterval, this.Configuration.RecoveryInterval);
             this._tasksTimer = new Timer(this.ExecutePeriodicTasks, null, 1000, 1000);
             this.FeaturePlugIns = new FeaturePlugInContainer(this.PlugInManager);
+            this._configChangeHandlerRegistration = this.ConfigurationChangeMediator.RegisterObject(this.Configuration, this, this.OnGameConfigurationChangeAsync);
         }
         catch (Exception ex)
         {
@@ -99,13 +103,11 @@ public class GameContext : AsyncDisposable, IGameContext
     /// <inheritdoc />
     public virtual float ExperienceRate => this.Configuration.ExperienceRate;
 
-    /// <summary>
-    /// Gets the initialized maps which are hosted on this context.
-    /// </summary>
-    public IEnumerable<GameMap> Maps => this._mapList.Values.Concat(this._miniGames.Values.Select(g => g.Map));
-
     /// <inheritdoc/>
     public GameConfiguration Configuration { get; }
+
+    /// <inheritdoc/>
+    public IConfigurationChangeMediator ConfigurationChangeMediator { get; }
 
     /// <inheritdoc/>
     public PlugInManager PlugInManager { get; }
@@ -127,6 +129,11 @@ public class GameContext : AsyncDisposable, IGameContext
     /// </summary>
     public IDictionary<string, Player> PlayersByCharacterName { get; } = new ConcurrentDictionary<string, Player>();
 
+    /// <summary>
+    /// Gets the state of the active self defenses.
+    /// </summary>
+    public ConcurrentDictionary<(Player Attacker, Player Defender), DateTime> SelfDefenseState { get; } = new();
+
     /// <inheritdoc />
     public ILoggerFactory LoggerFactory { get; }
 
@@ -142,6 +149,15 @@ public class GameContext : AsyncDisposable, IGameContext
     /// Gets the name of the meter of this class.
     /// </summary>
     internal static string MeterName => typeof(GameContext).FullName ?? nameof(GameContext);
+
+    /// <summary>
+    /// Gets the initialized maps which are hosted on this context.
+    /// </summary>
+    public async ValueTask<IEnumerable<GameMap>> GetMapsAsync()
+    {
+        using var l = await this._mapInitializerLock.LockAsync();
+        return this._mapList.Values.Concat(this._miniGames.Values.Select(g => g.Map)).ToList();
+    }
 
     /// <inheritdoc/>
     public async ValueTask<GameMap?> GetMapAsync(ushort mapId, bool createIfNotExists = true)
@@ -206,7 +222,7 @@ public class GameContext : AsyncDisposable, IGameContext
             return miniGameContext;
         }
 
-        using (await this._mapInitializerLock.LockAsync())
+        using (await this._mapInitializerLock.LockAsync().ConfigureAwait(false))
         {
             if (this._miniGames.TryGetValue(miniGameKey, out miniGameContext))
             {
@@ -215,6 +231,9 @@ public class GameContext : AsyncDisposable, IGameContext
 
             switch (miniGameDefinition.Type)
             {
+                case MiniGameType.ChaosCastle:
+                    miniGameContext = new ChaosCastleContext(miniGameKey, miniGameDefinition, this, this._mapInitializer);
+                    break;
                 case MiniGameType.DevilSquare:
                     miniGameContext = new DevilSquareContext(miniGameKey, miniGameDefinition, this, this._mapInitializer);
                     break;
@@ -239,11 +258,13 @@ public class GameContext : AsyncDisposable, IGameContext
     }
 
     /// <inheritdoc />
-    public void RemoveMiniGame(MiniGameContext miniGameContext)
+    public async ValueTask RemoveMiniGameAsync(MiniGameContext miniGameContext)
     {
+        using var l = await this._mapInitializerLock.LockAsync().ConfigureAwait(false);
         MiniGameCounter.Add(-1);
         miniGameContext.Dispose();
         this._miniGames.Remove(miniGameContext.Key);
+        this.GameMapRemoved?.Invoke(this, miniGameContext.Map);
     }
 
     /// <summary>
@@ -262,6 +283,18 @@ public class GameContext : AsyncDisposable, IGameContext
         }
 
         PlayerCounter.Add(1);
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<IList<Player>> GetPlayersAsync()
+    {
+        using var l = await this._playerListLock.ReaderLockAsync();
+        if (this._playerList.Count == 0)
+        {
+            return [];
+        }
+
+        return this._playerList.ToList();
     }
 
     /// <summary>
@@ -307,10 +340,8 @@ public class GameContext : AsyncDisposable, IGameContext
             return;
         }
 
-        using (await this._playerListLock.ReaderLockAsync())
-        {
-            await this._playerList.Select(action).WhenAll().ConfigureAwait(false);
-        }
+        var playerList = await this.GetPlayersAsync().ConfigureAwait(false);
+        await playerList.Select(action).WhenAll().ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -329,9 +360,17 @@ public class GameContext : AsyncDisposable, IGameContext
     /// <inheritdoc/>
     protected override async ValueTask DisposeAsyncCore()
     {
+        this._configChangeHandlerRegistration.Dispose();
         await this._recoverTimer.DisposeAsync().ConfigureAwait(false);
         await this._tasksTimer.DisposeAsync().ConfigureAwait(false);
         await base.DisposeAsyncCore().ConfigureAwait(false);
+    }
+
+#pragma warning disable CS1998
+    private async ValueTask OnGameConfigurationChangeAsync(Action unregisterAction, GameConfiguration gameConfiguration, GameContext context)
+#pragma warning restore CS1998
+    {
+        this._recoverTimer.Change(gameConfiguration.RecoveryInterval, gameConfiguration.RecoveryInterval);
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "VSTHRD100:Avoid async void methods", Justification = "Catching all Exceptions.")]
@@ -364,7 +403,6 @@ public class GameContext : AsyncDisposable, IGameContext
 
                 return Task.CompletedTask;
             }).ConfigureAwait(false);
-
         }
         catch
         {

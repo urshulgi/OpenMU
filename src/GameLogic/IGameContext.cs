@@ -9,6 +9,7 @@ using MUnique.OpenMU.Interfaces;
 using MUnique.OpenMU.Pathfinding;
 using MUnique.OpenMU.Persistence;
 using MUnique.OpenMU.PlugIns;
+using System.Collections.Concurrent;
 
 /// <summary>
 /// The context of the game.
@@ -31,7 +32,7 @@ public interface IGameContext
     float ExperienceRate { get; }
 
     /// <summary>
-    /// Gets the repository manager. Used to retrieve data, e.g. from a database.
+    /// Gets the repository provider. Used to retrieve data, e.g. from a database.
     /// </summary>
     IPersistenceContextProvider PersistenceContextProvider { get; }
 
@@ -44,6 +45,11 @@ public interface IGameContext
     /// Gets the configuration.
     /// </summary>
     GameConfiguration Configuration { get; }
+
+    /// <summary>
+    /// Gets the configuration change mediator.
+    /// </summary>
+    IConfigurationChangeMediator ConfigurationChangeMediator { get; }
 
     /// <summary>
     /// Gets the plug in manager.
@@ -76,9 +82,19 @@ public interface IGameContext
     IObjectPool<PathFinder> PathFinderPool { get; }
 
     /// <summary>
+    /// Gets the state of the active self defenses.
+    /// </summary>
+    ConcurrentDictionary<(Player Attacker, Player Defender), DateTime> SelfDefenseState { get; }
+
+    /// <summary>
     /// Gets the initialized maps which are hosted on this context.
     /// </summary>
-    IEnumerable<GameMap> Maps { get; }
+    ValueTask<IEnumerable<GameMap>> GetMapsAsync();
+
+    /// <summary>
+    /// Gets the players.
+    /// </summary>
+    ValueTask<IList<Player>> GetPlayersAsync();
 
     /// <summary>
     /// Adds the player to the game.
@@ -110,7 +126,7 @@ public interface IGameContext
     /// Removes the mini game instance from the context.
     /// </summary>
     /// <param name="miniGameContext">The context of the mini game.</param>
-    void RemoveMiniGame(MiniGameContext miniGameContext);
+    ValueTask RemoveMiniGameAsync(MiniGameContext miniGameContext);
 
     /// <summary>
     /// Gets the player object by character name.
